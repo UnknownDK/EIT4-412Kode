@@ -44,21 +44,8 @@ void flow(){
     flowCount = FlowCounter_ReadCounter();
 }
 
-int main(void)
-{
-    CyGlobalIntEnable; /* Enable global interrupts. */
-    VaegtMux_Start();
-    ADCVaegt_Start();
-    LysMux_Start();
-    ADCLys_Start();
-    UART_Start();
-    CyDelay(500);
-    /* Place your initialization/startup code here (e.g. MyInst_Start()) */
-
-    for(;;)
-    {
-        /* Place your application code here. */
-        //læs sensor og counter
+CY_ISR(Clock_2_handler){
+           //læs sensor og counter
         flow();
         lysADC();
         vaegtADC();
@@ -89,7 +76,23 @@ int main(void)
         msg[29]=check;
         //send besked
         UART_PutArray(msg,30); 
-        CyDelay(20); //24 = 42 Hz
+}
+int main(void)
+{
+    CyGlobalIntEnable; /* Enable global interrupts. */
+    VaegtMux_Start();
+    ADCVaegt_Start();
+    LysMux_Start();
+    ADCLys_Start();
+    UART_Start();
+    isr_Send_StartEx(Clock_2_handler);
+    CyDelay(500);
+    /* Place your initialization/startup code here (e.g. MyInst_Start()) */
+
+    for(;;)
+    {
+        /* Place your application code here. */
+
     }
 }
 

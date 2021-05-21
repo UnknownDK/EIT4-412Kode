@@ -26,9 +26,9 @@ int vaegtStatus;
 #define lilleHoej 7
 #define mellemHoej 8
 #define storHoej 11
-#define lilleOlvol 230
+#define lilleOlvol 330
 #define mellemOlvol 400
-#define storOlvol 400
+#define storOlvol 470
 #define lilleOlGram 386
 #define mellemOlGram 205
 #define storOlGram 271
@@ -48,6 +48,7 @@ u8 stationStatus = ligeBestilt;
 #define	altBeregnet 2
 u8 statusPSOCKom = tjekIntet;	//variabel til hvor meget der skal hentes fra psoc
 
+
 /*Opsaetning af Besked laengder til UARTs*/
 #define mesLenghtPSOC 30
 #define mesLenghtESP 1
@@ -58,6 +59,7 @@ u8 recBufferESP[mesLenghtESP];
 u8 lillePils = 0;
 u8 mellemPils = 0;
 u8 storPils = 0;
+
 
 /*Opsaetning af GPIO enheder der bruges globalt*/
 XGpio motorControl;
@@ -70,16 +72,18 @@ XGpio psocResetPin;
 #define bundPosition 0
 int oensketPos = bundPosition; //en variabel til den oenskede pos for motoren
 
+
 /*Arrays til sensordata*/
 long flowData;
 unsigned int vaegtData[3];
 unsigned int lysData[11];
 unsigned int lysKalib[11];
 
-/*kalibreringsfaktor*/
+
+/*kalibreringsfaktorer*/
 int vaegtKalibFaktor = 0;
-//skal aendres
-#define flowKali 1900 // er ganget med 1000
+#define flowKali 1600 //er ganget med 1000
+
 
 /*Handlers til esp uart */
 void RecvHandlerESP(void *CallBackRef, unsigned int EventData) {
@@ -97,34 +101,38 @@ void RecvHandlerESP(void *CallBackRef, unsigned int EventData) {
 		storPils += antalOel;
 	}
 }
-void SendHandlerESP(void *CallBackRef, unsigned int EventData) {
+void SendHandlerESP(void *CallBackRef, unsigned int EventData) { //benyttes ikke
 	//TotalSentCount = EventData;
 }
 /*****************************************/
 
+
+
 /*Handlers til psoc uart */
 void RecvHandlerPSOC(void *CallBackRef, unsigned int EventData) {
-	//print("PSOC\n\r");
-	if (statusPSOCKom == tjekIntet) {
-		XUartLite_ResetFifos(&psocUART); //toem buffer
+
+	if (statusPSOCKom == tjekIntet) {		//ignorerer ny data under udregninger
+		XUartLite_ResetFifos(&psocUART);	//toem buffer
 	}
 	else {
-		XUartLite_Recv(&psocUART, recBufferPSOC, mesLenghtPSOC);
+		XUartLite_Recv(&psocUART, recBufferPSOC, mesLenghtPSOC); //modtager data
 		u32 check = 0; //checksum variabel
 
 		for (int i = 0; i < 29; i++) { //udregning af checksum
 			check += recBufferPSOC[i];
 		}
-		check = check & 0xFF;
+		check = check & 0xFF; //checksum er kun 8 bit saa der maskes
 
 		if (check == recBufferPSOC[29]) { //check checksum
 			flowData = recBufferPSOC[0];
+
+
 			int a = 1;
 			for (int i = 0; i < 11; i++) {
 				a++;
-				lysData[i] = recBufferPSOC[a];
-				lysData[i] = lysData[i] << 8;
-				lysData[i] += recBufferPSOC[a - 1];
+				lysData[i] = recBufferPSOC[a];		//gemmer foerste 8 bit af data
+				lysData[i] = lysData[i] << 8;		//de er MSB saa shiftes til plads 8-15
+				lysData[i] += recBufferPSOC[a - 1];	//laegger sidste 8 bit til
 				a++;
 			}
 			for (int i = 0; i < 3; i++) {
@@ -133,36 +141,24 @@ void RecvHandlerPSOC(void *CallBackRef, unsigned int EventData) {
 				vaegtData[i] = vaegtData[i] << 8;
 				vaegtData[i] += recBufferPSOC[a - 1];
 				a++;
-				statusPSOCKom = tjekAlt;
+
 
 			}
+			statusPSOCKom = tjekAlt; //Alt data gemt saa klar til ny data
 		}
 		else {
-			print("ProblemsCHECKSUM\n\r");
-			statusPSOCKom = altBeregnet;
+			statusPSOCKom = altBeregnet; //kaster data vaek hvis checksum er fejl
 		}
+
 	}
 	//
 
 }
-void SendHandlerPSOC(void *CallBackRef, unsigned int EventData) {
+void SendHandlerPSOC(void *CallBackRef, unsigned int EventData) { //bruges ikke
 	//TotalSentCount = EventData;
 }
 /*****************************************/
 
-/*****************************************/
-/*Laver udregningen x^y
- *
- * 
- unsigned int powerU(u8 x, u8 y) {
-	 int res = 1;
-	 for (u8 i = 0; i < y; i++) {
-		 res *= x;
-	 }
-	 return res;
- }
- */
-/*****************************************/
 
 
 /*****************************************/
@@ -210,17 +206,16 @@ void setEnginePos(XGpio *ioNavn, int nyOensketPos) {
 
 	//fortaeller der er ny data klar
 	digitalExWrite(ioNavn, 9, 1);
-	XGpio_SetDataDirection(ioNavn, 1, 0xfff); 	//laes pins
-	while (ackIn == 0){						//venter paa handshake
-		ackIn = XGpio_DiscreteRead(ioNavn, 1) & 0x200;
+	XGpio_SetDataDirection(ioNavn, 1, 0xfff); 			//laeser på alle pins
+	while (ackIn == 0){									//venter paa handshake
+		ackIn = XGpio_DiscreteRead(ioNavn, 1) & 0x200;	//tjekker handshake/ack pin
 	}
 
 	//henter data fra register
 	XGpio_SetDataDirection(ioNavn, 1, 0xfff);
 	manglendeSteps = XGpio_DiscreteRead(ioNavn, 1);
-	retning = (manglendeSteps>>8) & 0x0001;  //Hvad retning koerte den sidst
-	manglendeSteps = manglendeSteps & 0x00ff;
-	//xil_printf("Manglende skridt 1: %d\n\r", manglendeSteps);
+	retning = (manglendeSteps>>8) & 0x0001;  			//Hvad retning koerte den sidst
+	manglendeSteps = manglendeSteps & 0x00ff;			//antal steps motor ikke har koert
 
 	//Finder den nuvaerende position
 	if (retning == 1){
@@ -229,27 +224,23 @@ void setEnginePos(XGpio *ioNavn, int nyOensketPos) {
 	else if (retning == 0){
 		nuvaerendePos = oensketPos - manglendeSteps;
 	}
-	//xil_printf("nuvaerende pos: %d\n\r", nuvaerendePos);
-	//xil_printf("Oensket retning: %d\n\r", retning);
+
 
 	//Regner og skriver til motor
 	if(nuvaerendePos > nyOensketPos){
-		manglendeSteps = (nuvaerendePos - nyOensketPos) | 0x100;
+		manglendeSteps = (nuvaerendePos - nyOensketPos) | 0x100; //saetter bit 8/retning pin hoej
 	}
 	else if(nuvaerendePos < nyOensketPos){
 		manglendeSteps = nyOensketPos - nuvaerendePos;
 	}
-	XGpio_SetDataDirection(ioNavn, 1, 0xc00); //saetter 9 pins til outputs
+	XGpio_SetDataDirection(ioNavn, 1, 0xc00); 		//saetter 9 pins til outputs
 	XGpio_DiscreteWrite(ioNavn, 1, manglendeSteps); //sender det oenskede antal steps + en retning + dataNewPin bliver lav
-	//xil_printf("Manglende skridt 2: %d\n\r", manglendeSteps);
-	oensketPos = nyOensketPos; //opdaterer den oenskede position
-	//xil_printf("oensketPosition NEW: %d\n\r", oensketPos);
-
+	oensketPos = nyOensketPos; 						//opdaterer den oenskede position
 }
 /*****************************************/
 
 
-
+//funktion der returnerer hvad vaegt i gram der staar paa platformen
 int samletVaegt() {
 
 	long a = -16722 * vaegtData[2];
@@ -264,95 +255,103 @@ int samletVaegt() {
 	return vaegt;
 }
 
+
+//Funktion der returnerer hvorvidt det rigtige, intet eller forkerte glas staar paa platformen
+//Input er oeltype vaegt
 int checkGlasPlacering(int a){
 	u8 faldetTilRo = 0;
 	int tempVaegt = 0;
 	int vaegt = 0;
 
+	//Der kraeves 10 naesten ens maalinger for at vaegten er verificeret
 	while (faldetTilRo < 10 ){
+
+		//venter paa ny data
 		while (statusPSOCKom == altBeregnet) {
-				}
-		vaegt = samletVaegt();
+		}
 		statusPSOCKom = altBeregnet;
+		vaegt = samletVaegt();
+
 		if ((tempVaegt != vaegt) && ((tempVaegt-vaegt) < 10) && ((tempVaegt-vaegt) > -10)){
 			faldetTilRo++;
-		} else {
-			tempVaegt = vaegt;
+		}
+		else {
+			tempVaegt = vaegt;	//nulstiller reference vaegt
+			faldetTilRo = 0; 	//nulstiller antal stabile maalinger
 		}
 	}
 
-	//xil_printf("vaegtKalibFaktor: %d\n\r", vaegtKalibFaktor);
-	//xil_printf("vaegt: %d\n\r", vaegt);
 
 	if (a < (vaegt - vaegtKalibFaktor + 20) && a > (vaegt - vaegtKalibFaktor - 20)) {
-		//print("Rigtig glas\n\r");
 		return korrektGlas;
 
 	}
 	else if (0 < (vaegt - vaegtKalibFaktor + 60) && 0 > (vaegt - vaegtKalibFaktor - 60)) {
-		//print("Intet glas\n\r");
 		return intetGlas;
 
 	}
 	else {
-		//print("Forkert glas\n\r");
 		return forkertGlas;
 	}
 
 }
 
+//Funktion der tager tyve maalinger og returnerer vaegten maalt. Benyttes til kalibrering
 int kalibrerVaegt() {
-
 	long tempVaegt = 0;
 	int kalib = 0;
-	statusPSOCKom = altBeregnet; //skal maaske fjernes senere hvis dette bliver en del af main loop
-	for (int i = 0; i < 20; i++) {
 
+	statusPSOCKom = altBeregnet; //Sikrer vi arbejder med ny data
+	for (int i = 0; i < 20; i++) { //udfoerer 20 maalinger
 
-		tempVaegt += samletVaegt();
-		//xil_printf("tempvaegt: %d\r", tempVaegt);
+		//venter paa ny data
+		while (statusPSOCKom == altBeregnet) {
+		}
 		statusPSOCKom = altBeregnet;
+		tempVaegt += samletVaegt();
 	}
 	kalib = tempVaegt / 20;
-	//xil_printf("Kalibreringsfaktor: %d\n\r", kalib);
 	return kalib;
 }
 
+//funktion til kalibrering af lyssensorer
 void kalibrerLys(){
-	//print("kalibLYS\n\r");
 	u32 tempLys[11];
 	for(int q =0; q<11;q++){
 		tempLys[q] = 0;
 	}
-	for(int j = 0; j < 20; j++){
+	for(int j = 0; j < 20; j++){ //looper 20 maalinger igennem
+
+		//venter paa ny data
 		while (statusPSOCKom == altBeregnet) {
 		}
-		for (int i = 0; i < 11; i++) 
+		for (int i = 0; i < 11; i++)
 		{	
 			tempLys[i] += lysData[i];
-			//xil_printf("templys: %d\n\r", tempLys[i]);
-			//xil_printf("lys nr %d: %d\n\r", i, lysData[i] );
 		}
 		statusPSOCKom = altBeregnet;
 	}
 	for (int p = 0; p < 11; p++){
 		tempLys[p] = tempLys[p]/20;
 		lysKalib[p] = tempLys[p];
-		//xil_printf("lysKalib nr %d: %d\n\r", p, lysKalib[p] );
 	}
 }
 
 
-void oelLogik(int StoerelseBestilt) {
-	int denPosViVilHave = topPosition;
-	digitalExWrite(&psocResetPin, 0, LOW); //stopper med at resette PSOC flow
-	while((flowData*flowKali)/1000 <= StoerelseBestilt){
 
-		while (statusPSOCKom == altBeregnet) {
+//Funktion der styrer ophaeldning af oellen
+void oelLogik(int StoerelseBestilt) {
+	int denPosViVilHave = topPosition;								//variabel til motorPos
+	digitalExWrite(&psocResetPin, 0, LOW); 							//stopper med at resette PSOC flow
+	while((flowData*flowKali)/1000 <= StoerelseBestilt){ //tjekker flowsensor om hele oellen er haeldt op
+
+
+		while (statusPSOCKom == altBeregnet) { //sikrer der ikke regnes paa gammel data
 				}
 		statusPSOCKom = tjekIntet;
 
-//		//Funktion til escape ved fejlophaeldning
+//		//tjek til escape ved fejlophaeldning
+		//udkommenteret da flow kali er unreliable
 		//int vaegt=samletVaegt();
 //		if(((vaegt + 30) > (flowData*flowKali)/1000) || ((vaegt - 30) < (flowData*flowKali)/1000)){
 //			//sluk hane og send fejlmelding
@@ -361,41 +360,34 @@ void oelLogik(int StoerelseBestilt) {
 //			return;
 //		}
 
-//		for(int p = 0; p<11; p++){
-//			xil_printf("lys nr %d: %d\n\r", p, lysData[p] );
-//		}
 
+		//Hvis der ikke er oel i toppen af glas så taend hane. Sluk hane hvis glas fyldt
 		if(lysData[glasHoejde-1] > (lysKalib[glasHoejde-1]-120)){
-			//taend hane
+
 			digitalExWrite(&ventilControl, 0, HIGH);
 		}
 		else {
-			//sluk hane
+
 			digitalExWrite(&ventilControl, 0, LOW);
 		}
 
+		//justerer vippeposition saafremt at der er oel hoejt oppe i glas
 		if(lysData[glasHoejde-3] < (lysKalib[glasHoejde-3]-120)){
-			//vip ned
 			if(denPosViVilHave > bundPosition){
 				denPosViVilHave -=2;
 				if(denPosViVilHave < bundPosition){
 					denPosViVilHave = bundPosition;
 				}
 				setEnginePos(&motorControl, denPosViVilHave);
-				//xil_printf("enginePos: %d",denPosViVilHave );
 			}
 		}
 
-		long testFlow = (flowData*flowKali)/1000;
-		xil_printf("FlowData: %d\n\r", flowData );
-		xil_printf("TestFlow: %d\n\r", testFlow );
 		statusPSOCKom = altBeregnet;
 	}
 	//sluk hane
 	digitalExWrite(&ventilControl, 0, LOW);
 	digitalExWrite(&psocResetPin, 0, HIGH);
 	stationStatus = fjernOel;
-
 }
 	
 
@@ -461,7 +453,7 @@ int main(){
 	XUartLite_Initialize(&psocUART, XPAR_UART_PSOC_DEVICE_ID);
 	XIntc_Connect(&intController,
 				  XPAR_MICROBLAZE_0_AXI_INTC_UART_PSOC_INTERRUPT_INTR,
-				  (XInterruptHandler)XUartLite_InterruptHandler, (void *)&psocUART);
+				  	  (XInterruptHandler)XUartLite_InterruptHandler, (void *)&psocUART);
 	XIntc_Enable(&intController,
 				 XPAR_MICROBLAZE_0_AXI_INTC_UART_PSOC_INTERRUPT_INTR);
 	XUartLite_SetSendHandler(&psocUART, SendHandlerPSOC, &psocUART);
@@ -483,37 +475,10 @@ int main(){
 	statusPSOCKom = tjekAlt;
 	/*****************************************/
 
-//	sleep(5);
-//	vaegtKalibFaktor = kalibrerVaegt();
-//	int vaegtTester = 0;
-//	while(1){
-//		vaegtTester = (samletVaegt()) - vaegtKalibFaktor;
-//		xil_printf("Vaegt: %d\n\r", vaegtTester );
-//		sleep(1);
-//	}
-
-
-//	//testBLok
-//	setEnginePos(&motorControl, topPosition);
-//	int tester = topPosition;
-//	sleep(5);
-//	print(" \n \r");
-//	while(1){
-//
-//		if(tester > bundPosition){
-//			tester -=10;
-//			if(tester < bundPosition){
-//				tester = bundPosition;
-//			}
-//			setEnginePos(&motorControl, tester);
-//			print(" \n \r");
-//		}
-//	}
-
 
 	/*Main Loop af kode*/
 	while (1){
-		oelStoerelseBestilt = 0;
+		oelStoerelseBestilt = ingenOel;
 		oelVaegtBestilt = 0;
 		if (sidsteIndex != 1){
 			lcd1602Clear();
@@ -521,6 +486,7 @@ int main(){
 			lcd1602WriteString(afventOrdre);
 			sidsteIndex = 1;
 		}
+
 
 		/*blok til bestillingshaandtering*/
 		if (storPils > 0){
@@ -569,7 +535,6 @@ int main(){
 				vaegtStatus = checkGlasPlacering(oelVaegtBestilt);
 				if (vaegtStatus == korrektGlas){
 
-
 					setEnginePos(&motorControl, topPosition);
 					kalibrerLys();
 
@@ -583,14 +548,14 @@ int main(){
 					}
 
 					//delay her - skal ikke vaere delay i et system med flere haner
-					usleep(1800000); //tid er random lige nu
+					usleep(1800000); //tiden kan saenkes hvis det oenskes
 					if (sidsteIndex != 5){
 						lcd1602Clear();
 						lcd1602SetCursor(0, 0);
 						lcd1602WriteString(serverer);
 						sidsteIndex = 5;
 					}
-					//digitalExWrite(&ventilControl, 0, 1); //vi burde koere det her i oelLogik
+
 					stationStatus = haelderNu;
 					statusPSOCKom = tjekAlt;
 				}
@@ -632,7 +597,6 @@ int main(){
 					oelStoerelseBestilt = ingenOel;
 				}
 				break;
-
 			}
 
 
